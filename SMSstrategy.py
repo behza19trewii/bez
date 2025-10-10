@@ -4,7 +4,7 @@ sma_backtest.py
 یک اسکریپت تک‌فایلی پیشرفته برای بک‌تست استراتژی SMA crossover با خروجی‌های کامل، بهینه‌سازی پارامتر، شاخص‌های عملکرد و نمودارهای ذخیره‌شدنی.
 نحوه استفاده:
 - در همان پوشه یک data.csv (یا data.json) قرار دهید که حداقل ستون‌های Date و Close داشته باشد.
-- سپس اجرا کنید: python sma_backtest.py salam2
+- سپس اجرا کنید: python sma_backtest.py
 """
 import os
 from math import sqrt
@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 
 # ------------------------- Utilities -------------------------
-def load_data(path_csv = r"F:\sell\v2\EURUSD1440_d.csv", path_json='data.json'):
+def load_data(path_csv = r"F:\sell\EURUSD1440_d.csv", path_json='data.json'):
     """Robust loader: tries CSV then JSON; special handling for whitespace-separated files
     like the attached `data3.csv` where rows may look like:
       2009-09-25 16:00   1.46818 1.46839 1.46456 1.46685       14219
@@ -465,9 +465,17 @@ def main():
     print(f"Win rate: {win_rate:.2%}, Avg win: {avg_win:.2f}%, Avg loss: {avg_loss:.2f}%")
 
     # ---------- save outputs ----------
-    bt_trades.to_csv('backtest_trades.csv', index=False)
-    bt_data[['Close', f'SMA_{MA_SHORT_DEFAULT}', f'SMA_{MA_SHORT_DEFAULT * 2}', 'ATR', 'Entry', 'Exit', 'PositionQty', 'Cash', 'Equity']].to_csv('backtest_daily.csv')
-    print("\nSaved: backtest_trades.csv, backtest_daily.csv")
+    # create a timestamped output folder: optimization+YYYYMMDD_HHMM
+    now_str = datetime.now().strftime('%Y%m%d_%H%M')
+    out_dir = os.path.join(os.getcwd(), f"optimization&backtest{now_str}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    bt_trades.to_csv(os.path.join(out_dir, 'backtest_trades.csv'), index=False)
+    bt_data[[
+        'Close', f'SMA_{MA_SHORT_DEFAULT}', f'SMA_{MA_SHORT_DEFAULT * 2}', 'ATR',
+        'Entry', 'Exit', 'PositionQty', 'Cash', 'Equity'
+    ]].to_csv(os.path.join(out_dir, 'backtest_daily.csv'))
+    print(f"\nSaved: backtest_trades.csv, backtest_daily.csv -> {out_dir}")
 
     # ---------- optimization ----------
     opt_ma_shorts = [5, 10, 15, 20]
@@ -483,8 +491,8 @@ def main():
                            use_trailing_atr=USE_TRAILING_ATR,
                            atr_mult=ATR_MULT,
                            atr_period=ATR_PERIOD)
-    opt_df.to_csv('optimization_results.csv', index=False)
-    print("Saved: optimization_results.csv")
+    opt_df.to_csv(os.path.join(out_dir, 'optimization_results.csv'), index=False)
+    print(f"Saved: optimization_results.csv -> {out_dir}")
 
     # ---------- plots ----------
     plt.figure(figsize=(14, 6))
@@ -500,7 +508,7 @@ def main():
         plt.scatter(exs.index, bt_data.loc[exs.index, 'Close'], marker='v', s=80, label='Exit', zorder=5)
     plt.legend()
     plt.tight_layout()
-    plt.savefig('price_sma_trades.png')
+    plt.savefig(os.path.join(out_dir, 'price_sma_trades.png'))
     plt.show()
 
     plt.figure(figsize=(12, 5))
@@ -509,7 +517,7 @@ def main():
     plt.axhline(INITIAL_CAPITAL, linestyle='--', label='Initial Capital')
     plt.legend()
     plt.tight_layout()
-    plt.savefig('equity_curve.png')
+    plt.savefig(os.path.join(out_dir, 'equity_curve.png'))
     plt.show()
 
     plt.figure(figsize=(8, 4))
@@ -517,7 +525,7 @@ def main():
     if not bt_trades.empty:
         plt.hist(bt_trades['pct_return'].dropna(), bins=20)
     plt.tight_layout()
-    plt.savefig('trade_returns_hist.png')
+    plt.savefig(os.path.join(out_dir, 'trade_returns_hist.png'))
     plt.show()
 
     # heatmap
@@ -533,7 +541,7 @@ def main():
             plt.text(i, j, f"{val:.1f}", ha='center', va='center', fontsize=8)
         plt.colorbar(label='Total Return (%)')
         plt.tight_layout()
-        plt.savefig('optimization_heatmap.png')
+        plt.savefig(os.path.join(out_dir, 'optimization_heatmap.png'))
         plt.show()
     except Exception as e:
         print("Could not plot optimization heatmap:", e)
