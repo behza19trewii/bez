@@ -4,7 +4,7 @@ sma_backtest.py
 یک اسکریپت تک‌فایلی پیشرفته برای بک‌تست استراتژی SMA crossover با خروجی‌های کامل، بهینه‌سازی پارامتر، شاخص‌های عملکرد و نمودارهای ذخیره‌شدنی.
 نحوه استفاده:
 - در همان پوشه یک data.csv (یا data.json) قرار دهید که حداقل ستون‌های Date و Close داشته باشد.
-- سپس اجرا کنید: python sma_backtest.py
+- سپس اجرا کنید: python sma_backtest.py salam
 """
 import os
 from math import sqrt
