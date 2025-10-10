@@ -15,163 +15,44 @@ import matplotlib.pyplot as plt
 
 
 # ------------------------- Utilities -------------------------
-def load_data(path_csv = r"F:\sell\EURUSD1440_d.csv", path_json='data.json'):
-    """Robust loader: tries CSV then JSON; special handling for whitespace-separated files
-    like the attached `data3.csv` where rows may look like:
-      2009-09-25 16:00   1.46818 1.46839 1.46456 1.46685       14219
-
-    Behavior:
-    - If file parses normally with delimiters, use parsed columns.
-    - If file reads as a single column, split on whitespace into tokens and
-      try to reconstruct columns (Date [+ Time], Open, High, Low, Close, Volume).
-    - Prefer the 'open' column (case-insensitive) and map it to 'Close' so
-      downstream code that expects 'Close' continues to work.
+def load_data(path_csv=r"F:\sell\EURUSD1440_converted.csv"):
     """
-    if os.path.exists(path_csv):
-        import re as _re
+    نسخه پایدار برای فایل EURUSD1440_d.csv با ساختار استاندارد CSV:
+    Date,Time,Open,Close,High,Low,Volume
+    """
+    import pandas as pd, os
 
-        # First attempt: pandas auto-read (comma or obvious delimiter)
-        try:
-            df = pd.read_csv(path_csv, engine='python')
-        except Exception:
-            # fallback to a simple read
-            df = pd.read_csv(path_csv, header=None, engine='python')
+    if not os.path.exists(path_csv):
+        print(f"❌ فایل داده پیدا نشد: {path_csv}")
+        exit(1)
 
-        # If file was read into a single column, try splitting by whitespace
-        if df.shape[1] == 1:
-            # read raw lines and split
-            with open(path_csv, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = [ln.strip() for ln in f if ln.strip()]
+    try:
+        df = pd.read_csv(path_csv)
+    except Exception as e:
+        print("❌ خطا در خواندن فایل:", e)
+        exit(1)
 
-            rows = []
-            header_tokens = None
-            for i, ln in enumerate(lines):
-                toks = _re.split(r"\s+", ln)
-                # detect header-like first row (contains non-numeric words)
-                if i == 0 and any(_re.match(r"[A-Za-z]", t) for t in toks[:3]):
-                    header_tokens = [t.strip() for t in toks]
-                    continue
-                # combine date+time if time token present (e.g., '16:00')
-                if len(toks) >= 6 and _re.match(r"^\d{1,2}:\d{2}$", toks[1]):
-                    date_str = toks[0] + ' ' + toks[1]
-                    rest = toks[2:]
-                    rows.append([date_str] + rest)
-                elif len(toks) >= 5 and _re.match(r"^\d{4}-\d{2}-\d{2}$", toks[0]) and _re.match(r"^\d{1,2}:\d{2}$", toks[1]):
-                    date_str = toks[0] + ' ' + toks[1]
-                    rest = toks[2:]
-                    rows.append([date_str] + rest)
-                else:
-                    # generic: keep tokens as-is
-                    rows.append(toks)
+    if df.empty:
+        print("❌ فایل داده خالی است یا ساختار آن اشتباه است.")
+        exit(1)
 
-            if not rows:
-                raise ValueError('CSV appears empty after parsing')
+    # اطمینان از اینکه ستون‌ها دقیقاً مطابق انتظار هستند
+    expected_cols = ['Date', 'Time', 'Open', 'Close', 'High', 'Low', 'Volume']
+    for c in expected_cols:
+        if c not in df.columns:
+            print(f"❌ ستون '{c}' در فایل یافت نشد.")
+            exit(1)
 
-            # Decide column names
-            maxcols = max(len(r) for r in rows)
-            if header_tokens and len(header_tokens) >= 2:
-                colnames = header_tokens
-            else:
-                # typical mapping: Date[,Time], Open, High, Low, Close[,Volume]
-                if maxcols >= 6:
-                    colnames = ['DateTime', 'Open', 'High', 'Low', 'Close', 'Volume']
-                elif maxcols == 5:
-                    colnames = ['DateTime', 'Open', 'High', 'Low', 'Close']
-                elif maxcols == 4:
-                    colnames = ['DateTime', 'Open', 'High', 'Low']
-                else:
-                    # fallback: generic numbered columns
-                    colnames = [f'col{i}' for i in range(maxcols)]
+    # ترکیب Date و Time به اندیس زمانی
+    df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')
+    df = df.dropna(subset=['DateTime']).set_index('DateTime').sort_index()
 
-            # normalize rows to same length
-            norm_rows = [r + [None] * (len(colnames) - len(r)) if len(r) < len(colnames) else r[:len(colnames)] for r in rows]
-            df = pd.DataFrame(norm_rows, columns=colnames)
+    # تبدیل داده‌های عددی
+    for c in ['Open', 'Close', 'High', 'Low', 'Volume']:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
 
-        # strip column names
-        df.columns = [str(c).strip() for c in df.columns]
-        cols_lower = [c.lower() for c in df.columns]
-
-        # Identify date/datetime column: prefer name with 'date' or 'time' or 'datetime'
-        date_col = None
-        for target in ['datetime', 'date', 'time']:
-            if target in cols_lower:
-                date_col = df.columns[cols_lower.index(target)]
-                break
-
-        # If not found, try to detect the column with most datetime-parsable values
-        if date_col is None:
-            best_score = 0.0
-            for c in df.columns:
-                try:
-                    parsed = pd.to_datetime(df[c], errors='coerce', infer_datetime_format=True)
-                    score = parsed.notna().mean()
-                except Exception:
-                    score = 0.0
-                if score > best_score:
-                    best_score = score
-                    date_col = c
-
-        if date_col is None:
-            raise ValueError('Could not detect date/datetime column in CSV')
-
-        # coerce to datetime (combine date and time if needed is already handled above)
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce', infer_datetime_format=True)
-        df = df.set_index(date_col).sort_index()
-
-        # Prefer 'open' column for calculations; map it to 'Close'
-        if 'open' in cols_lower:
-            open_col = df.columns[cols_lower.index('open')]
-            df = df[[open_col]].copy()
-            df.columns = ['Close']
-        elif 'close' in cols_lower:
-            close_col = df.columns[cols_lower.index('close')]
-            df = df[[close_col]].copy()
-            df.columns = ['Close']
-        else:
-            # fallback: pick first numeric column
-            numeric_cols = [c for c in df.columns if pd.to_numeric(df[c], errors='coerce').notna().any()]
-            if numeric_cols:
-                df = df[[numeric_cols[0]]].copy()
-                df.columns = ['Close']
-            else:
-                raise ValueError("CSV found but no numeric price column (open/close) detected")
-
-        df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
-        return df[['Close']].copy()
-    elif os.path.exists(path_json):
-        df = pd.read_json(path_json)
-        cols_lower = [c.lower() for c in df.columns]
-        if 'date' in cols_lower:
-            date_col = df.columns[cols_lower.index('date')]
-            df[date_col] = pd.to_datetime(df[date_col])
-            df = df.set_index(date_col).sort_index()
-
-        # همین اولویت‌بندی را برای JSON نیز انجام می‌دهیم
-        if 'open' in cols_lower:
-            open_col = df.columns[cols_lower.index('open')]
-            df = df[[open_col]].copy()
-            df.columns = ['Close']
-        else:
-            if 'close' in cols_lower:
-                close_col = df.columns[cols_lower.index('close')]
-                df = df[[close_col]].copy()
-                df.columns = ['Close']
-            else:
-                if df.shape[1] == 1:
-                    df.columns = ['Close']
-                else:
-                    raise ValueError("JSON found but no 'open' or 'Close' column. Provide at least Date and Open/Close.")
-        return df[['Close']].copy()
-    else:
-        # دادهٔ ساختگی (برای تست فوری)
-        np.random.seed(42)
-        n = 1000
-        dt_index = pd.date_range(end=pd.Timestamp.today(), periods=n, freq='B')  # business days
-        returns = np.random.normal(loc=0.0003, scale=0.01, size=n)
-        price = 100 * np.exp(np.cumsum(returns))
-        df = pd.DataFrame({'Close': price}, index=dt_index)
-        print("No data file found. Generated synthetic price series for demo.")
-        return df
+    df = df.dropna(subset=['Close'])
+    return df
 
 
 def atr(df, n=14):
