@@ -14,8 +14,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ui_trigger import get_user_config
 
-def main():
-    config = get_user_config()
+def main_from_ui(config=None):
+    """Run backtest using a UI-provided config.
+
+    If `config` is None this function will call `get_user_config()` once.
+    Returns (bt_data, bt_trades, config) so the caller can continue with saving/plots.
+    """
+    if config is None:
+        config = get_user_config()
 
     df = load_data(config["data_path"])
 
@@ -36,8 +42,10 @@ def main():
         atr_period=config["atr_period"],
     )
 
+    return df, bt_data, bt_trades, config
+
 # ------------------------- Utilities -------------------------
-def load_data(path_csv=r"F:\sell\EURUSD1440_d_converted.csv"):
+def load_data(path_csv=r"F:\sell\EURUSD60_h1_converted.csv"):
     """
     نسخه پایدار برای فایل EURUSD1440_d.csv با ساختار استاندارد CSV:
     Date,Time,Open,Close,High,Low,Volume
@@ -384,34 +392,48 @@ def main():
         "atr_period": 14,
     }
 
-    # ---------- Get user config via UI ----------
+    # ---------- Get user config via UI (optional) ----------
+    ui_ran = False
     try:
         config = get_user_config()
+        # update defaults in-place with provided non-None values
         defaults.update({k: v for k, v in config.items() if v is not None})
         print("✅ Using parameters from UI.")
+
+        # Run the backtest once using UI config and get results
+        df, bt_data, bt_trades, used_config = main_from_ui(config=defaults)
+        ui_ran = True
+        # ensure defaults reflect used_config
+        defaults.update({k: v for k, v in used_config.items() if v is not None})
+
     except Exception as e:
         print(f"⚠️ UI failed or closed ({e}). Using default parameters.")
+        # If UI failed or was closed, fall back to non-UI flow below which will run the backtest
 
-    # ---------- Load data ----------
-    df = load_data(defaults["data_path"])
+        
 
-    # ---------- Run backtest ----------
-    bt_data, bt_trades = backtest_sma(
-        df,
-        MA_SHORT_DEFAULT=defaults["MA_SHORT_DEFAULT"],
-        ma_long=defaults["ma_long"],
-        initial_capital=defaults["initial_capital"],
-        position_size_pct=defaults["position_size_pct"],
-        commission=defaults["commission"],
-        slippage=defaults["slippage"],
-        exit_on_ma_cross=defaults["exit_on_ma_cross"],
-        take_profit_pct=defaults["take_profit_pct"],
-        stop_loss_pct=defaults["stop_loss_pct"],
-        max_holding_days=defaults["max_holding_days"],
-        use_trailing_atr=defaults["use_trailing_atr"],
-        atr_mult=defaults["atr_mult"],
-        atr_period=defaults["atr_period"],
-    )
+    # If UI already ran and produced results, skip rerunning the backtest
+    if not ui_ran:
+        # ---------- Load data ----------
+        df = load_data(defaults["data_path"])
+
+        # ---------- Run backtest ----------
+        bt_data, bt_trades = backtest_sma(
+            df,
+            MA_SHORT_DEFAULT=defaults["MA_SHORT_DEFAULT"],
+            ma_long=defaults["ma_long"],
+            initial_capital=defaults["initial_capital"],
+            position_size_pct=defaults["position_size_pct"],
+            commission=defaults["commission"],
+            slippage=defaults["slippage"],
+            exit_on_ma_cross=defaults["exit_on_ma_cross"],
+            take_profit_pct=defaults["take_profit_pct"],
+            stop_loss_pct=defaults["stop_loss_pct"],
+            max_holding_days=defaults["max_holding_days"],
+            use_trailing_atr=defaults["use_trailing_atr"],
+            atr_mult=defaults["atr_mult"],
+            atr_period=defaults["atr_period"],
+        )
 
     # ---------- Compute metrics ----------
     metrics = compute_metrics_from_equity(bt_data["Equity"])
@@ -429,7 +451,7 @@ def main():
     initial_capital = defaults["initial_capital"]
 
     print("\n=== Backtest Summary ===")
-    print(f"MA short: {ma_short}, MA long: {ma_long}")
+    print(f"MA short: {defaults['MA_SHORT_DEFAULT']}, MA long: {defaults['ma_long']}")
     print(f"Initial capital: {initial_capital}")
     print(f"Number of trades: {num_trades}")
     print(f"Total return: {metrics['total_return_pct']:.2f}%")
@@ -441,15 +463,16 @@ def main():
 
     # ---------- save outputs ----------
     # create a timestamped output folder: optimization+YYYYMMDD_HHMM
-    now_str = datetime.now().strftime('%Y%m%d_%H%M')
+    now_str = datetime.now().strftime('%Y_%m_%d_%H%M')
     out_dir = os.path.join(os.getcwd(), f"optimization&backtest{now_str}")
     os.makedirs(out_dir, exist_ok=True)
 
     bt_trades.to_csv(os.path.join(out_dir, 'backtest_trades.csv'), index=False)
     bt_data[[
-        'Close', f'SMA_{ma_short}', f'SMA_{ma_long}', 'ATR',
+        'Close', f"SMA_{defaults['MA_SHORT_DEFAULT']}", f"SMA_{defaults['ma_long']}", 'ATR',
         'Entry', 'Exit', 'PositionQty', 'Cash', 'Equity'
     ]].to_csv(os.path.join(out_dir, 'backtest_daily.csv'))
+
     print(f"\nSaved: backtest_trades.csv, backtest_daily.csv -> {out_dir}")
 
     # ---------- optimization ----------
@@ -477,7 +500,7 @@ def main():
     plt.figure(figsize=(14, 6))
     plt.title('Price with SMAs and Trades')
     plt.plot(bt_data.index, bt_data['Close'], label='Close')
-    plt.plot(bt_data.index, bt_data[f'SMA_{ma_short}'], label=f'SMA_{ma_short}')
+    plt.plot(bt_data.index, bt_data[f"SMA_{defaults['MA_SHORT_DEFAULT']}"], label=f"SMA_{defaults['MA_SHORT_DEFAULT']}")
     plt.plot(bt_data.index, bt_data[f'SMA_{ma_long}'], label=f'SMA_{ma_long}')
     ents = bt_data[bt_data['Entry']]
     exs = bt_data[bt_data['Exit']]
