@@ -43,15 +43,37 @@ def load_data(path_csv=r"F:\sell\EURUSD1440_converted.csv"):
             print(f"❌ ستون '{c}' در فایل یافت نشد.")
             exit(1)
 
-    # ترکیب Date و Time به اندیس زمانی
-    df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')
-    df = df.dropna(subset=['DateTime']).set_index('DateTime').sort_index()
+    
+    # ✅ اطمینان از اینکه رشته هستند
+    df['Date'] = df['Date'].astype(str)
+    df['Time'] = df['Time'].astype(str)
 
-    # تبدیل داده‌های عددی
-    for c in ['Open', 'Close', 'High', 'Low', 'Volume']:
+    # ✅ ترکیب Date و Time به اندیس زمانی
+    df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')
+
+    # ✅ بررسی ردیف‌های مشکل‌دار بدون حذف
+    bad_dt = df['DateTime'].isna()
+    if bad_dt.any():
+        print(f"⚠️ هشدار: {bad_dt.sum()} سطر دارای تاریخ/زمان نامعتبر است:")
+        print(df.loc[bad_dt, ['Date', 'Time']].head(10))
+        raise ValueError("🚫 برخی سطرها تاریخ/زمان نامعتبر دارند (مشخص شده در خروجی بالا).")
+
+    # ✅ ادامه فقط با سطرهای سالم (اما حذف فیزیکی انجام نمی‌دیم)
+    df = df.set_index('DateTime').sort_index()
+
+    
+
+     # ✅ تبدیل داده‌های عددی با گزارش موارد خراب
+    numeric_cols = ['Open', 'Close', 'High', 'Low', 'Volume']
+    for c in numeric_cols:
+        bad = pd.to_numeric(df[c], errors='coerce').isna() & df[c].notna()
+        if bad.any():
+            print(f"⚠️ هشدار: {bad.sum()} مقدار در ستون '{c}' مشکل دارد و به NaN تبدیل می‌شود:")
+            print(df.loc[bad, [c]].head(10))
         df[c] = pd.to_numeric(df[c], errors='coerce')
 
     df = df.dropna(subset=['Close'])
+
     return df
 
 
@@ -251,8 +273,14 @@ def backtest_sma(df, ma_short=10, ma_long=None, initial_capital=10000.0, positio
     # مقداردهی اولیه و پر کردن اینده‌نگر
     if pd.isna(data['Equity'].iloc[0]):
         data.at[data.index[0], 'Equity'] = initial_capital
-    data['Equity'].ffill(inplace=True)
 
+    data['Equity'] = data['Equity'].ffill()
+    # به‌روزرسانی مقدار نقدی و سرمایه در هر روز (بدون هشدار chained assignment)
+    data.loc[today, 'Cash'] = cash
+    data.loc[today, 'Equity'] = cash + qty * data['Close'].iloc[i]
+
+
+    # ساخت DataFrame از لیست معاملات
     trades_df = pd.DataFrame(trades)
     if trades_df.empty:
         trades_df = pd.DataFrame(columns=['entry_date', 'entry_price', 'exit_date', 'exit_price',

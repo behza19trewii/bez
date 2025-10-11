@@ -2,6 +2,4 @@ git init
 git remote add origin <https://github.com/behza19trewii/bez.git
 git checkout -b name_of_branch
 git add .
-git commit -m "بهبود منطق ATR و تنظیم پارامترهای پیش‌فرض"
 git push -u origin name_of_branch
-
