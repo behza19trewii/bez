@@ -37,7 +37,7 @@ def main():
     )
 
 # ------------------------- Utilities -------------------------
-def load_data(path_csv=r"F:\sell\EURUSD1440_converted.csv"):
+def load_data(path_csv=r"F:\sell\EURUSD1440_d_converted.csv"):
     """
     نسخه پایدار برای فایل EURUSD1440_d.csv با ساختار استاندارد CSV:
     Date,Time,Open,Close,High,Low,Volume
