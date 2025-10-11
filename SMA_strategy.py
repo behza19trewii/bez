@@ -496,6 +496,42 @@ def main():
     opt_df.to_csv(os.path.join(out_dir, 'optimization_results.csv'), index=False)
     print(f"Saved: optimization_results.csv -> {out_dir}")
 
+    # ---------- write run log (config + summary) ----------
+    final_config = used_config if 'ui_ran' in locals() and ui_ran else defaults
+    log_path = os.path.join(out_dir, 'used_config_and_summary.txt')
+    try:
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"Run timestamp: {datetime.now().isoformat()}\n\n")
+            f.write("Used configuration:\n")
+            for k, v in final_config.items():
+                f.write(f"{k}: {v}\n")
+            f.write("\nPerformance summary:\n")
+            for k, v in metrics.items():
+                f.write(f"{k}: {v}\n")
+            f.write(f"profit_factor: {pf}\n")
+            f.write(f"num_trades: {num_trades}\n")
+            f.write(f"win_rate: {win_rate}\n")
+            f.write(f"avg_win_pct: {avg_win}\n")
+            f.write(f"avg_loss_pct: {avg_loss}\n")
+
+            # include best optimization row if present
+            try:
+                if 'opt_df' in locals() and not opt_df.empty:
+                    f.write('\nBest optimization (by total_return_pct):\n')
+                    best = opt_df.sort_values('total_return_pct', ascending=False).iloc[0]
+                    for col in best.index:
+                        f.write(f"{col}: {best[col]}\n")
+            except Exception:
+                # non-fatal: continue
+                pass
+
+            f.write('\nSaved files in folder:\n')
+            for fn in sorted(os.listdir(out_dir)):
+                f.write(f"- {fn}\n")
+        print(f"Saved run log -> {log_path}")
+    except Exception as e:
+        print("Could not write run log:", e)
+
     # ---------- plots ----------
     plt.figure(figsize=(14, 6))
     plt.title('Price with SMAs and Trades')
