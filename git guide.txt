@@ -1,5 +1,20 @@
 git init
 git remote add origin <https://github.com/behza19trewii/bez.git
-git checkout -b name_of_branch
+
+git checkout -b name_of_branch 
+or 
+git branch <branch name>
+
+Option 4: Creating a branch from another branch
+This example shows creating the feature4 branch from the develop branch.
+
+git checkout -b feature4 develop
+
+
+
+
+
+
 git add .
+git commit -m "_completely NONE WARNING _ensure that date ad time is string"
 git push -u origin name_of_branch
