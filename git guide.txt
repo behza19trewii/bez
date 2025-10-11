@@ -5,16 +5,29 @@ git checkout -b name_of_branch
 or 
 git branch <branch name>
 
+--------------------------------
 Option 4: Creating a branch from another branch
 This example shows creating the feature4 branch from the develop branch.
 
 git checkout -b feature4 develop
-
-
-
-
-
-
+------------------------------
 git add .
 git commit -m "_completely NONE WARNING _ensure that date ad time is string"
 git push -u origin name_of_branch
+---------------------------------------
+Merging that branch into main (on remote)
+
+Once you’re ready to merge your work back into main:
+
+1️⃣ Switch to main
+git checkout main
+
+2️⃣ Update main (optional)
+git pull origin main
+
+3️⃣ Merge the branch
+git merge v2
+
+4️⃣ Push the updated main branch
+git push origin main
+-------------------------------------
