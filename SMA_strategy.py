@@ -12,7 +12,29 @@ from datetime import timedelta, datetime
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from ui_trigger import get_user_config
 
+def main():
+    config = get_user_config()
+
+    df = load_data(config["data_path"])
+
+    bt_data, bt_trades = backtest_sma(
+        df,
+        MA_SHORT_DEFAULT=config["MA_SHORT_DEFAULT"],
+        ma_long=config["ma_long"],
+        initial_capital=config["initial_capital"],
+        position_size_pct=config["position_size_pct"],
+        commission=config["commission"],
+        slippage=config["slippage"],
+        exit_on_ma_cross=config["exit_on_ma_cross"],
+        take_profit_pct=config["take_profit_pct"],
+        stop_loss_pct=config["stop_loss_pct"],
+        max_holding_days=config["max_holding_days"],
+        use_trailing_atr=config["use_trailing_atr"],
+        atr_mult=config["atr_mult"],
+        atr_period=config["atr_period"],
+    )
 
 # ------------------------- Utilities -------------------------
 def load_data(path_csv=r"F:\sell\EURUSD1440_converted.csv"):
@@ -147,7 +169,7 @@ def profit_factor(trades_df):
 
 
 # ------------------------- Backtest Engine -------------------------
-def backtest_sma(df, ma_short=10, ma_long=None, initial_capital=10000.0, position_size_pct=0.5,
+def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0, position_size_pct=0.5,
                  commission=0.0, slippage=0.0, exit_on_ma_cross=True, take_profit_pct=None,
                  stop_loss_pct=None, max_holding_days=None, use_trailing_atr=True,
                  atr_mult=3.0, atr_period=14):
@@ -155,12 +177,38 @@ def backtest_sma(df, ma_short=10, ma_long=None, initial_capital=10000.0, positio
     - ورود: وقتی SMA_short امروز بالاتر از SMA_long شد و دیروز <= بود.
     - خروج: ترکیبی از MA-cross down یا TP/SL یا Trailing ATR یا حداکثر مدت نگهداری.
     - اجرای قیمت در Close روز سیگنال (برای جلوگیری از lookahead از سیگنال دیروز استفاده شده).
+    
+        Trades contract (list of dicts)
+        -------------------------------
+        During the backtest we append a dict for each executed trade into `trades` list.
+        This function documents the expected shape so downstream code and tests can rely on it.
+
+        Each trade dict contains the following keys:
+            - entry_date: pd.Timestamp (datetime index value when trade opened)
+            - entry_price: float (execution price at entry)
+            - exit_date: pd.Timestamp or None (datetime when closed)
+            - exit_price: float or None (execution price at exit)
+            - qty: float (position size in units)
+            - pnl: float or None (profit/loss in currency units, qty*(exit-entry))
+            - pct_return: float or None (percentage return of the trade, e.g. 5.0 for 5%)
+            - holding_days: int or None (days between entry and exit)
+            - exit_reason: str or None (one of 'ma_cross','take_profit','stop_loss','trailing_atr','max_hold')
+            - cash_before: float (cash balance before entry)
+            - cash_after: float or computed later (cash after exit, may be added post-run)
+
+        Error modes:
+            - If a trade is still open at the end of the backtest, exit_date/exit_price/pnl/pct_return remain None.
+            - Numeric fields may contain NaN when computation is not possible.
+
+        The returned `trades_df` will be a DataFrame created from this list and coerced to
+        sensible dtypes where possible (datetimes, floats, ints). Empty trades list yields
+        an empty DataFrame with the columns listed above.
     """
     data = df.copy()
     if ma_long is None:
-        ma_long = ma_short * 2
+        ma_long = MA_SHORT_DEFAULT * 2
 
-    data[f'SMA_{ma_short}'] = data['Close'].rolling(window=ma_short, min_periods=1).mean()
+    data[f'SMA_{MA_SHORT_DEFAULT}'] = data['Close'].rolling(window=MA_SHORT_DEFAULT, min_periods=1).mean()
     data[f'SMA_{ma_long}'] = data['Close'].rolling(window=ma_long, min_periods=1).mean()
     data['ATR'] = atr(data, n=atr_period)
 
@@ -181,9 +229,9 @@ def backtest_sma(df, ma_short=10, ma_long=None, initial_capital=10000.0, positio
     for i in range(1, len(data)):
         today = data.index[i]
         close_today = float(data['Close'].iloc[i])
-        sma_s_today = float(data[f'SMA_{ma_short}'].iloc[i])
+        sma_s_today = float(data[f'SMA_{MA_SHORT_DEFAULT}'].iloc[i])
         sma_l_today = float(data[f'SMA_{ma_long}'].iloc[i])
-        sma_s_yest = float(data[f'SMA_{ma_short}'].iloc[i - 1])
+        sma_s_yest = float(data[f'SMA_{MA_SHORT_DEFAULT}'].iloc[i - 1])
         sma_l_yest = float(data[f'SMA_{ma_long}'].iloc[i - 1])
 
         entry_signal = (sma_s_yest <= sma_l_yest) and (sma_s_today > sma_l_today)
@@ -299,11 +347,11 @@ def optimize_grid(df, ma_shorts=[5, 10, 15, 20], tp_values=[None, 0.03, 0.05], *
     results = []
     for ma in ma_shorts:
         for tp in tp_values:
-            data_bt, trades = backtest_sma(df, ma_short=ma, ma_long=ma * 2, take_profit_pct=tp, **kwargs)
+            data_bt, trades = backtest_sma(df, MA_SHORT_DEFAULT=ma, ma_long=ma * 2, take_profit_pct=tp, **kwargs)
             metrics = compute_metrics_from_equity(data_bt['Equity'])
             pf = profit_factor(trades)
             results.append({
-                'ma_short': ma,
+                'MA_SHORT_DEFAULT': ma,
                 'take_profit_pct': tp if tp is not None else np.nan,
                 'total_return_pct': metrics['total_return_pct'],
                 'CAGR_pct': metrics['CAGR_pct'],
@@ -318,41 +366,55 @@ def optimize_grid(df, ma_shorts=[5, 10, 15, 20], tp_values=[None, 0.03, 0.05], *
 
 # ------------------------- Main (config + run) -------------------------
 def main():
-    # ---------- Default user config ----------
-    INITIAL_CAPITAL = 10000.0
-    POSITION_PCT = 0.5              # هر معامله 50% از سرمایه جاری
-    COMMISSION = 0.0
-    SLIPPAGE = 0.0005
-    MA_SHORT_DEFAULT = 10
-    USE_TRAILING_ATR = True         # فعال بودن Trailing ATR به‌صورت پیش‌فرض
-    ATR_MULT = 3.0
-    ATR_PERIOD = 14
-    EXIT_ON_MA = True
-    STOP_LOSS = -0.05               # 5% stop loss (قابل تغییر)
-    TAKE_PROFIT = 0.05              # 5% take profit (قابل تغییر)
-    MAX_HOLD = None                 # حداکثر نگهداری (روز)؛ None یعنی غیر فعال
+     # ---------- Default configuration ----------
+    defaults = {
+        "data_path": "data.csv",
+        "initial_capital": 10000.0,
+        "position_size_pct": 0.5,
+        "commission": 0.0,
+        "slippage": 0.0005,
+        "MA_SHORT_DEFAULT": 10,
+        "ma_long": 20,
+        "exit_on_ma_cross": True,
+        "take_profit_pct": 0.05,
+        "stop_loss_pct": -0.05,
+        "max_holding_days": None,
+        "use_trailing_atr": True,
+        "atr_mult": 3.0,
+        "atr_period": 14,
+    }
 
-    # ---------- load data ----------
-    df = load_data()
+    # ---------- Get user config via UI ----------
+    try:
+        config = get_user_config()
+        defaults.update({k: v for k, v in config.items() if v is not None})
+        print("✅ Using parameters from UI.")
+    except Exception as e:
+        print(f"⚠️ UI failed or closed ({e}). Using default parameters.")
 
-    # ---------- run backtest ----------
-    bt_data, bt_trades = backtest_sma(df,
-                                      ma_short=MA_SHORT_DEFAULT,
-                                      ma_long=MA_SHORT_DEFAULT * 2,
-                                      initial_capital=INITIAL_CAPITAL,
-                                      position_size_pct=POSITION_PCT,
-                                      commission=COMMISSION,
-                                      slippage=SLIPPAGE,
-                                      exit_on_ma_cross=EXIT_ON_MA,
-                                      take_profit_pct=TAKE_PROFIT,
-                                      stop_loss_pct=STOP_LOSS,
-                                      max_holding_days=MAX_HOLD,
-                                      use_trailing_atr=USE_TRAILING_ATR,
-                                      atr_mult=ATR_MULT,
-                                      atr_period=ATR_PERIOD)
+    # ---------- Load data ----------
+    df = load_data(defaults["data_path"])
 
-    # ---------- metrics ----------
-    metrics = compute_metrics_from_equity(bt_data['Equity'])
+    # ---------- Run backtest ----------
+    bt_data, bt_trades = backtest_sma(
+        df,
+        MA_SHORT_DEFAULT=defaults["MA_SHORT_DEFAULT"],
+        ma_long=defaults["ma_long"],
+        initial_capital=defaults["initial_capital"],
+        position_size_pct=defaults["position_size_pct"],
+        commission=defaults["commission"],
+        slippage=defaults["slippage"],
+        exit_on_ma_cross=defaults["exit_on_ma_cross"],
+        take_profit_pct=defaults["take_profit_pct"],
+        stop_loss_pct=defaults["stop_loss_pct"],
+        max_holding_days=defaults["max_holding_days"],
+        use_trailing_atr=defaults["use_trailing_atr"],
+        atr_mult=defaults["atr_mult"],
+        atr_period=defaults["atr_period"],
+    )
+
+    # ---------- Compute metrics ----------
+    metrics = compute_metrics_from_equity(bt_data["Equity"])
     pf = profit_factor(bt_trades)
     win_trades = bt_trades[bt_trades['pct_return'] > 0] if not bt_trades.empty else pd.DataFrame()
     loss_trades = bt_trades[bt_trades['pct_return'] <= 0] if not bt_trades.empty else pd.DataFrame()
@@ -362,9 +424,13 @@ def main():
     avg_loss = loss_trades['pct_return'].mean() if not loss_trades.empty else np.nan
 
     # ---------- print summary ----------
+    ma_short = defaults["MA_SHORT_DEFAULT"]
+    ma_long = defaults["ma_long"]
+    initial_capital = defaults["initial_capital"]
+
     print("\n=== Backtest Summary ===")
-    print(f"MA short: {MA_SHORT_DEFAULT}, MA long: {MA_SHORT_DEFAULT * 2}")
-    print(f"Initial capital: {INITIAL_CAPITAL}")
+    print(f"MA short: {ma_short}, MA long: {ma_long}")
+    print(f"Initial capital: {initial_capital}")
     print(f"Number of trades: {num_trades}")
     print(f"Total return: {metrics['total_return_pct']:.2f}%")
     print(f"CAGR: {metrics['CAGR_pct']:.2f}%")
@@ -381,7 +447,7 @@ def main():
 
     bt_trades.to_csv(os.path.join(out_dir, 'backtest_trades.csv'), index=False)
     bt_data[[
-        'Close', f'SMA_{MA_SHORT_DEFAULT}', f'SMA_{MA_SHORT_DEFAULT * 2}', 'ATR',
+        'Close', f'SMA_{ma_short}', f'SMA_{ma_long}', 'ATR',
         'Entry', 'Exit', 'PositionQty', 'Cash', 'Equity'
     ]].to_csv(os.path.join(out_dir, 'backtest_daily.csv'))
     print(f"\nSaved: backtest_trades.csv, backtest_daily.csv -> {out_dir}")
@@ -389,17 +455,21 @@ def main():
     # ---------- optimization ----------
     opt_ma_shorts = [5, 10, 15, 20]
     opt_tp_values = [None, 0.03, 0.05]
-    opt_df = optimize_grid(df, ma_shorts=opt_ma_shorts, tp_values=opt_tp_values,
-                           initial_capital=INITIAL_CAPITAL,
-                           position_size_pct=POSITION_PCT,
-                           commission=COMMISSION,
-                           slippage=SLIPPAGE,
-                           exit_on_ma_cross=EXIT_ON_MA,
-                           stop_loss_pct=STOP_LOSS,
-                           max_holding_days=MAX_HOLD,
-                           use_trailing_atr=USE_TRAILING_ATR,
-                           atr_mult=ATR_MULT,
-                           atr_period=ATR_PERIOD)
+    opt_df = optimize_grid(
+        df,
+        ma_shorts=opt_ma_shorts,
+        tp_values=opt_tp_values,
+        initial_capital=defaults["initial_capital"],
+        position_size_pct=defaults["position_size_pct"],
+        commission=defaults["commission"],
+        slippage=defaults["slippage"],
+        exit_on_ma_cross=defaults["exit_on_ma_cross"],
+        stop_loss_pct=defaults["stop_loss_pct"],
+        max_holding_days=defaults["max_holding_days"],
+        use_trailing_atr=defaults["use_trailing_atr"],
+        atr_mult=defaults["atr_mult"],
+        atr_period=defaults["atr_period"],
+    )
     opt_df.to_csv(os.path.join(out_dir, 'optimization_results.csv'), index=False)
     print(f"Saved: optimization_results.csv -> {out_dir}")
 
@@ -407,8 +477,8 @@ def main():
     plt.figure(figsize=(14, 6))
     plt.title('Price with SMAs and Trades')
     plt.plot(bt_data.index, bt_data['Close'], label='Close')
-    plt.plot(bt_data.index, bt_data[f'SMA_{MA_SHORT_DEFAULT}'], label=f'SMA_{MA_SHORT_DEFAULT}')
-    plt.plot(bt_data.index, bt_data[f'SMA_{MA_SHORT_DEFAULT * 2}'], label=f'SMA_{MA_SHORT_DEFAULT * 2}')
+    plt.plot(bt_data.index, bt_data[f'SMA_{ma_short}'], label=f'SMA_{ma_short}')
+    plt.plot(bt_data.index, bt_data[f'SMA_{ma_long}'], label=f'SMA_{ma_long}')
     ents = bt_data[bt_data['Entry']]
     exs = bt_data[bt_data['Exit']]
     if not ents.empty:
@@ -423,7 +493,7 @@ def main():
     plt.figure(figsize=(12, 5))
     plt.title('Equity Curve')
     plt.plot(bt_data.index, bt_data['Equity'], label='Equity')
-    plt.axhline(INITIAL_CAPITAL, linestyle='--', label='Initial Capital')
+    plt.axhline(initial_capital, linestyle='--', label='Initial Capital')
     plt.legend()
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, 'equity_curve.png'))
@@ -439,7 +509,7 @@ def main():
 
     # heatmap
     try:
-        opt_pivot = opt_df.pivot(index='ma_short', columns='take_profit_pct', values='total_return_pct')
+        opt_pivot = opt_df.pivot(index='MA_SHORT_DEFAULT', columns='take_profit_pct', values='total_return_pct')
         plt.figure(figsize=(6, 5))
         plt.title('Optimization: Total Return (%) heatmap')
         vals = opt_pivot.values
