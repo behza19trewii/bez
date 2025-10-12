@@ -41,7 +41,14 @@ def main_from_ui(config=None):
         atr_mult=config["atr_mult"],
         atr_period=config["atr_period"],
     )
+    print("\n===== BACKTEST DATA (bt_data) SAMPLE =====")
+    print(bt_data.head(10))
 
+    print("\n===== BACKTEST TRADES (bt_trades) =====")
+    print(bt_trades)
+
+    print("\n===== BACKTEST TRADES (df) =====")
+    print(df)
     return df, bt_data, bt_trades, config
 
 # ------------------------- Utilities -------------------------
@@ -352,12 +359,26 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
 
 # ------------------------- Optimization -------------------------
 def optimize_grid(df, ma_shorts=[5, 10, 15, 20], tp_values=[None, 0.03, 0.05], **kwargs):
+    """
+    اجرای گرید سرچ روی پارامترهای MA کوتاه و درصد تارگت سود.
+    برای هر ترکیب، بک‌تست را اجرا می‌کند و متریک‌ها را در یک DataFrame برمی‌گرداند.
+    """
     results = []
+
     for ma in ma_shorts:
         for tp in tp_values:
-            data_bt, trades = backtest_sma(df, MA_SHORT_DEFAULT=ma, ma_long=ma * 2, take_profit_pct=tp, **kwargs)
+            data_bt, trades = backtest_sma(
+                df,
+                MA_SHORT_DEFAULT=ma,
+                ma_long=ma * 2,
+                take_profit_pct=tp,
+                **kwargs
+            )
             metrics = compute_metrics_from_equity(data_bt['Equity'])
             pf = profit_factor(trades)
+            print("whatttttttttttttttttttt")
+            print(pf)
+
             results.append({
                 'MA_SHORT_DEFAULT': ma,
                 'take_profit_pct': tp if tp is not None else np.nan,
@@ -369,6 +390,7 @@ def optimize_grid(df, ma_shorts=[5, 10, 15, 20], tp_values=[None, 0.03, 0.05], *
                 'profit_factor': pf,
                 'num_trades': len(trades)
             })
+
     return pd.DataFrame(results)
 
 

@@ -1,0 +1,48 @@
+Run timestamp: 2025-10-12T21:39:44.016743
+
+Used configuration:
+data_path: F:/sell/EURUSD240_h4_converted.csv
+initial_capital: 100.0
+position_size_pct: 0.5
+commission: 0.0
+slippage: 0.0005
+MA_SHORT_DEFAULT: 695
+ma_long: 939
+exit_on_ma_cross: True
+take_profit_pct: 0.05
+stop_loss_pct: -0.05
+max_holding_days: None
+use_trailing_atr: True
+atr_mult: 3.0
+atr_period: 14
+
+Performance summary:
+total_return_pct: -0.29622042306957086
+CAGR_pct: -0.01850154539165816
+annual_vol_pct: 0.21429177567121016
+sharpe: -0.012425095917120828
+sortino: -0.002166627327743071
+max_drawdown_pct: -2.2559065125320164
+calmar: -0.008201379484867098
+profit_factor: 0.8895027950679165
+num_trades: 15
+win_rate: 0.4666666666666667
+avg_win_pct: 0.6898782476193561
+avg_loss_pct: -0.6737951223905442
+
+Best optimization (by total_return_pct):
+MA_SHORT_DEFAULT: 20.0
+take_profit_pct: 0.03
+total_return_pct: -21.423298442511907
+CAGR_pct: -1.4925056893253075
+sharpe: -0.23263392363756
+sortino: -0.18206755041863262
+max_drawdown_pct: -22.657458867225582
+profit_factor: 0.6728215997337635
+num_trades: 351.0
+
+Saved files in folder:
+- backtest_daily.csv
+- backtest_trades.csv
+- optimization_results.csv
+- used_config_and_summary.txt

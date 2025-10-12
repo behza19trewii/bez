@@ -31,3 +31,22 @@ git merge v2
 4️⃣ Push the updated main branch
 git push origin main
 -------------------------------------
+Deleting a branch locally
+Ensure you are not on the branch you want to delete: Switch to a different
+branch, typically the main branch:
+1️⃣
+git checkout main
+
+
+Delete the branch locally: Use the git branch -d <branch-name> command for
+a safe deletion that checks for unmerged changes, or git branch -D <branch-name> to force the deletion:
+2️⃣
+git branch -d feature-branch
+
+
+Push the deletion to GitHub: To remove the branch from your remote GitHub
+repository, use:
+3️⃣
+git push origin --delete feature-branch
+
+------------------------------------------------
