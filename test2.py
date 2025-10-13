@@ -551,7 +551,7 @@ def optimize_grid(df, ma_shorts=[5, 10, 15, 20], tp_values=[None, 0.03, 0.05], *
 
 
 
-        
+       #todo: add all variable to optimization_objective
 def objective(trial):
     MA_SHORT_DEFAULT_T = trial.suggest_int("short_window", 65, 80)
     ma_longg = trial.suggest_int("long_window", 110, 150)
