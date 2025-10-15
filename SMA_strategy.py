@@ -13,6 +13,125 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from ui_trigger import get_user_config
+import optuna
+import pandas as pd, os
+from dataclasses import dataclass
+from typing import Optional
+
+# ------------------------- Global configuration (UI labels preserved) -------------------------
+# We keep the exact UI labels as keys in GLOBAL_CONFIG so you can refer to them
+# by the same syntax in logs and UI code. Internally we also map them to safe
+# Python variable names and export those into module globals via
+# apply_config_globally().
+GLOBAL_CONFIG = {
+    "MA_SHORT_DEFAULT": 10,
+    "MA Long": 20,
+    "Initial Capital": 10000.0,
+    "Position Size %": 0.5,
+    "Commission": 0.0,
+    "Slippage": 0.0005,
+    "Exit on MA Cross": True,
+    "Take Profit %": 0.05,
+    "Stop Loss %": -0.05,
+    "Max Holding Days": None,
+    "Use Trailing ATR": True,
+    "ATR Mult": 3.0,
+    "ATR Period": 14,
+    # include data path so UI can present it too (not in the original list but used by code)
+    "Data Path": "data.csv",
+}
+
+# Map UI label keys to internal variable names used throughout this module
+UI_TO_INTERNAL = {
+    "MA_SHORT_DEFAULT": 'MA_SHORT_DEFAULT',
+    "MA Long": 'ma_long',
+    "Initial Capital": 'initial_capital',
+    "Position Size %": 'position_size_pct',
+    "Commission": 'commission',
+    "Slippage": 'slippage',
+    "Exit on MA Cross": 'exit_on_ma_cross',
+    "Take Profit %": 'take_profit_pct',
+    "Stop Loss %": 'stop_loss_pct',
+    "Max Holding Days": 'max_holding_days',
+    "Use Trailing ATR": 'use_trailing_atr',
+    "ATR Mult": 'atr_mult',
+    "ATR Period": 'atr_period',
+    "Data Path": 'data_path',
+}
+
+def apply_config_globally():
+    """Export values from GLOBAL_CONFIG into module-level Python variables
+    using the internal names in UI_TO_INTERNAL. Call this after updating
+    GLOBAL_CONFIG (e.g., after getting UI input).
+    """
+    for ui_key, internal_name in UI_TO_INTERNAL.items():
+        # convert empty string to None for Max Holding Days if necessary
+        val = GLOBAL_CONFIG.get(ui_key)
+        if ui_key == 'Max Holding Days' and (val == "" or val is None):
+            val = None
+        # export into module globals so all functions can refer to variables like ma_long
+        globals()[internal_name] = val
+
+# Explicit module-level variables (so static analysis and other modules see them)
+# These are initialized from GLOBAL_CONFIG defaults and will be kept in sync when
+# apply_config_globally() is called after UI input.
+MA_SHORT_DEFAULT = GLOBAL_CONFIG["MA_SHORT_DEFAULT"]
+ma_long = GLOBAL_CONFIG["MA Long"]
+initial_capital = GLOBAL_CONFIG["Initial Capital"]
+position_size_pct = GLOBAL_CONFIG["Position Size %"]
+commission = GLOBAL_CONFIG["Commission"]
+slippage = GLOBAL_CONFIG["Slippage"]
+exit_on_ma_cross = GLOBAL_CONFIG["Exit on MA Cross"]
+take_profit_pct = GLOBAL_CONFIG["Take Profit %"]
+stop_loss_pct = GLOBAL_CONFIG["Stop Loss %"]
+max_holding_days = GLOBAL_CONFIG["Max Holding Days"]
+use_trailing_atr = GLOBAL_CONFIG["Use Trailing ATR"]
+atr_mult = GLOBAL_CONFIG["ATR Mult"]
+atr_period = GLOBAL_CONFIG["ATR Period"]
+data_path = GLOBAL_CONFIG["Data Path"]
+
+# Initialize module globals from defaults (keeps GLOBAL_CONFIG authoritative)
+apply_config_globally()
+
+
+# ------------------------- Config dataclass (cleaner API) -------------------------
+@dataclass
+class BacktestConfig:
+    MA_SHORT_DEFAULT: int = GLOBAL_CONFIG["MA_SHORT_DEFAULT"]
+    ma_long: Optional[int] = GLOBAL_CONFIG["MA Long"]
+    initial_capital: float = GLOBAL_CONFIG["Initial Capital"]
+    position_size_pct: float = GLOBAL_CONFIG["Position Size %"]
+    commission: float = GLOBAL_CONFIG["Commission"]
+    slippage: float = GLOBAL_CONFIG["Slippage"]
+    exit_on_ma_cross: bool = GLOBAL_CONFIG["Exit on MA Cross"]
+    take_profit_pct: Optional[float] = GLOBAL_CONFIG["Take Profit %"]
+    stop_loss_pct: Optional[float] = GLOBAL_CONFIG["Stop Loss %"]
+    max_holding_days: Optional[int] = None
+    use_trailing_atr: bool = GLOBAL_CONFIG["Use Trailing ATR"]
+    atr_mult: float = GLOBAL_CONFIG["ATR Mult"]
+    atr_period: int = GLOBAL_CONFIG["ATR Period"]
+    data_path: str = GLOBAL_CONFIG["Data Path"]
+
+    @classmethod
+    def from_global(cls):
+        # ensure module globals are applied
+        apply_config_globally()
+        return cls(
+            MA_SHORT_DEFAULT=MA_SHORT_DEFAULT,
+            ma_long=ma_long,
+            initial_capital=initial_capital,
+            position_size_pct=position_size_pct,
+            commission=commission,
+            slippage=slippage,
+            exit_on_ma_cross=exit_on_ma_cross,
+            take_profit_pct=take_profit_pct,
+            stop_loss_pct=stop_loss_pct,
+            max_holding_days=max_holding_days,
+            use_trailing_atr=use_trailing_atr,
+            atr_mult=atr_mult,
+            atr_period=atr_period,
+            data_path=data_path,
+        )
 
 def main_from_ui(config=None):
     """Run backtest using a UI-provided config.
@@ -20,27 +139,36 @@ def main_from_ui(config=None):
     If `config` is None this function will call `get_user_config()` once.
     Returns (bt_data, bt_trades, config) so the caller can continue with saving/plots.
     """
+    # If no config provided, ask UI (which returns a dict keyed by UI labels)
     if config is None:
-        config = get_user_config()
+        ui_values = get_user_config()
+        # ui_values is expected to use the exact UI label keys; update GLOBAL_CONFIG
+        if isinstance(ui_values, dict):
+            for k, v in ui_values.items():
+                if k in GLOBAL_CONFIG and v is not None:
+                    GLOBAL_CONFIG[k] = v
+        # apply to module globals so all functions below see the updated values
+        apply_config_globally()
+    else:
+        # config was passed programmatically and may be internal-keyed; try to accept both formats
+        # if keys look like UI labels, update GLOBAL_CONFIG accordingly
+        for k, v in (config.items() if isinstance(config, dict) else []):
+            if k in GLOBAL_CONFIG:
+                GLOBAL_CONFIG[k] = v
+            elif k in UI_TO_INTERNAL.values():
+                # find corresponding UI key
+                ui_key = next((uk for uk, ik in UI_TO_INTERNAL.items() if ik == k), None)
+                if ui_key:
+                    GLOBAL_CONFIG[ui_key] = v
+        apply_config_globally()
 
-    df = load_data(config["data_path"])
+    # Use module-level data_path (populated by apply_config_globally)
+    df = load_data(data_path)
 
-    bt_data, bt_trades = backtest_sma(
-        df,
-        MA_SHORT_DEFAULT=config["MA_SHORT_DEFAULT"],
-        ma_long=config["ma_long"],
-        initial_capital=config["initial_capital"],
-        position_size_pct=config["position_size_pct"],
-        commission=config["commission"],
-        slippage=config["slippage"],
-        exit_on_ma_cross=config["exit_on_ma_cross"],
-        take_profit_pct=config["take_profit_pct"],
-        stop_loss_pct=config["stop_loss_pct"],
-        max_holding_days=config["max_holding_days"],
-        use_trailing_atr=config["use_trailing_atr"],
-        atr_mult=config["atr_mult"],
-        atr_period=config["atr_period"],
-    )
+    cfg = BacktestConfig.from_global()
+    bt_data, bt_trades = backtest_sma(df, cfg=cfg)
+
+    
     print("\n===== BACKTEST DATA (bt_data) SAMPLE =====")
     print(bt_data.head(10))
 
@@ -49,6 +177,7 @@ def main_from_ui(config=None):
 
     print("\n===== BACKTEST TRADES (df) =====")
     print(df)
+
     return df, bt_data, bt_trades, config
 
 # ------------------------- Utilities -------------------------
@@ -57,7 +186,7 @@ def load_data(path_csv=r"F:\sell\EURUSD60_h1_converted.csv"):
     نسخه پایدار برای فایل EURUSD1440_d.csv با ساختار استاندارد CSV:
     Date,Time,Open,Close,High,Low,Volume
     """
-    import pandas as pd, os
+    
 
     if not os.path.exists(path_csv):
         print(f"❌ فایل داده پیدا نشد: {path_csv}")
@@ -184,10 +313,32 @@ def profit_factor(trades_df):
 
 
 # ------------------------- Backtest Engine -------------------------
-def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0, position_size_pct=0.5,
-                 commission=0.0, slippage=0.0, exit_on_ma_cross=True, take_profit_pct=None,
-                 stop_loss_pct=None, max_holding_days=None, use_trailing_atr=True,
-                 atr_mult=3.0, atr_period=14):
+def backtest_sma(df, cfg: Optional[BacktestConfig] = None, **legacy_kwargs):
+    """Backtest. Prefer passing a BacktestConfig instance (cfg). For backwards
+    compatibility, legacy keyword args are accepted and converted to a cfg.
+    """
+    if cfg is None:
+        # build config from legacy kwargs or module globals
+        if legacy_kwargs:
+            # map legacy keys to dataclass fields where possible
+            cfg = BacktestConfig(
+                MA_SHORT_DEFAULT=legacy_kwargs.get('MA_SHORT_DEFAULT', MA_SHORT_DEFAULT),
+                ma_long=legacy_kwargs.get('ma_long', ma_long),
+                initial_capital=legacy_kwargs.get('initial_capital', initial_capital),
+                position_size_pct=legacy_kwargs.get('position_size_pct', position_size_pct),
+                commission=legacy_kwargs.get('commission', commission),
+                slippage=legacy_kwargs.get('slippage', slippage),
+                exit_on_ma_cross=legacy_kwargs.get('exit_on_ma_cross', exit_on_ma_cross),
+                take_profit_pct=legacy_kwargs.get('take_profit_pct', take_profit_pct),
+                stop_loss_pct=legacy_kwargs.get('stop_loss_pct', stop_loss_pct),
+                max_holding_days=legacy_kwargs.get('max_holding_days', max_holding_days),
+                use_trailing_atr=legacy_kwargs.get('use_trailing_atr', use_trailing_atr),
+                atr_mult=legacy_kwargs.get('atr_mult', atr_mult),
+                atr_period=legacy_kwargs.get('atr_period', atr_period),
+                data_path=legacy_kwargs.get('data_path', data_path),
+            )
+        else:
+            cfg = BacktestConfig.from_global()
     """پیاده‌سازی بک‌تست:
     - ورود: وقتی SMA_short امروز بالاتر از SMA_long شد و دیروز <= بود.
     - خروج: ترکیبی از MA-cross down یا TP/SL یا Trailing ATR یا حداکثر مدت نگهداری.
@@ -219,18 +370,19 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
         sensible dtypes where possible (datetimes, floats, ints). Empty trades list yields
         an empty DataFrame with the columns listed above.
     """
+    # use cfg values
     data = df.copy()
-    if ma_long is None:
-        ma_long = MA_SHORT_DEFAULT * 2
+    MA_SHORT = cfg.MA_SHORT_DEFAULT
+    ma_long_local = cfg.ma_long if cfg.ma_long is not None else (MA_SHORT * 2)
 
-    data[f'SMA_{MA_SHORT_DEFAULT}'] = data['Close'].rolling(window=MA_SHORT_DEFAULT, min_periods=1).mean()
-    data[f'SMA_{ma_long}'] = data['Close'].rolling(window=ma_long, min_periods=1).mean()
-    data['ATR'] = atr(data, n=atr_period)
+    data[f'SMA_{MA_SHORT}'] = data['Close'].rolling(window=MA_SHORT, min_periods=1).mean()
+    data[f'SMA_{ma_long_local}'] = data['Close'].rolling(window=ma_long_local, min_periods=1).mean()
+    data['ATR'] = atr(data, n=cfg.atr_period)
 
     trades = []
     in_pos = False
     qty = 0.0
-    cash = initial_capital
+    cash = cfg.initial_capital
     entry_price = None
     trailing_stop = None
 
@@ -244,27 +396,27 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
     for i in range(1, len(data)):
         today = data.index[i]
         close_today = float(data['Close'].iloc[i])
-        sma_s_today = float(data[f'SMA_{MA_SHORT_DEFAULT}'].iloc[i])
-        sma_l_today = float(data[f'SMA_{ma_long}'].iloc[i])
-        sma_s_yest = float(data[f'SMA_{MA_SHORT_DEFAULT}'].iloc[i - 1])
-        sma_l_yest = float(data[f'SMA_{ma_long}'].iloc[i - 1])
+        sma_s_today = float(data[f'SMA_{MA_SHORT}'].iloc[i])
+        sma_l_today = float(data[f'SMA_{ma_long_local}'].iloc[i])
+        sma_s_yest = float(data[f'SMA_{MA_SHORT}'].iloc[i - 1])
+        sma_l_yest = float(data[f'SMA_{ma_long_local}'].iloc[i - 1])
 
         entry_signal = (sma_s_yest <= sma_l_yest) and (sma_s_today > sma_l_today)
         exit_signal_ma = (sma_s_yest >= sma_l_yest) and (sma_s_today < sma_l_today)
 
         # ورود
         if (not in_pos) and entry_signal:
-            alloc = cash * position_size_pct
-            exec_price = close_today * (1 + slippage)
+            alloc = cash * cfg.position_size_pct
+            exec_price = close_today * (1 + cfg.slippage)
             qty = alloc / exec_price if exec_price > 0 else 0.0
             cash -= qty * exec_price
             cash -= commission
             in_pos = True
             entry_price = exec_price
             # trailing stop اولیه
-            if use_trailing_atr:
+            if cfg.use_trailing_atr:
                 atr_today = data['ATR'].iloc[i]
-                trailing_stop = entry_price - atr_mult * atr_today
+                trailing_stop = entry_price - cfg.atr_mult * atr_today
             data.at[today, 'Entry'] = True
             trades.append({
                 'entry_date': today, 'entry_price': entry_price, 'exit_date': None, 'exit_price': None,
@@ -275,24 +427,24 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
         # بررسی خروج‌ها
         if in_pos:
             trade = trades[-1]
-            if use_trailing_atr:
+            if cfg.use_trailing_atr:
                 atr_today = data['ATR'].iloc[i]
-                proposed_stop = close_today - atr_mult * atr_today
+                proposed_stop = close_today - cfg.atr_mult * atr_today
                 if trailing_stop is None or proposed_stop > trailing_stop:
                     trailing_stop = proposed_stop
             tp_hit = False
             sl_hit = False
             ts_hit = False
             max_hold_hit = False
-            if take_profit_pct is not None and entry_price:
-                tp_hit = (close_today / entry_price - 1) >= take_profit_pct
-            if stop_loss_pct is not None and entry_price:
-                sl_hit = (close_today / entry_price - 1) <= stop_loss_pct
+            if cfg.take_profit_pct is not None and entry_price:
+                tp_hit = (close_today / entry_price - 1) >= cfg.take_profit_pct
+            if cfg.stop_loss_pct is not None and entry_price:
+                sl_hit = (close_today / entry_price - 1) <= cfg.stop_loss_pct
             if use_trailing_atr and trailing_stop is not None and close_today <= trailing_stop:
                 ts_hit = True
-            if max_holding_days is not None:
+            if cfg.max_holding_days is not None:
                 hdays = (today - trade['entry_date']).days
-                if hdays >= max_holding_days:
+                if hdays >= cfg.max_holding_days:
                     max_hold_hit = True
 
             will_exit = False
@@ -314,7 +466,7 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
                 reason = 'max_hold'
 
             if will_exit:
-                exit_price = close_today * (1 - slippage)
+                exit_price = close_today * (1 - cfg.slippage)
                 cash += qty * exit_price
                 cash -= commission
                 in_pos = False
@@ -335,7 +487,7 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
 
     # مقداردهی اولیه و پر کردن اینده‌نگر
     if pd.isna(data['Equity'].iloc[0]):
-        data.at[data.index[0], 'Equity'] = initial_capital
+        data.at[data.index[0], 'Equity'] = cfg.initial_capital
 
     data['Equity'] = data['Equity'].ffill()
     # به‌روزرسانی مقدار نقدی و سرمایه در هر روز (بدون هشدار chained assignment)
@@ -359,90 +511,128 @@ def backtest_sma(df, MA_SHORT_DEFAULT=10, ma_long=None, initial_capital=10000.0,
 
 # ------------------------- Optimization -------------------------
 def optimize_grid(df, ma_shorts=[5, 10, 15, 20], tp_values=[None, 0.03, 0.05], **kwargs):
+    """
+    اجرای گرید سرچ روی پارامترهای MA کوتاه و درصد تارگت سود.
+    برای هر ترکیب، بک‌تست را اجرا می‌کند و متریک‌ها را در یک DataFrame برمی‌گرداند.
+    """
     results = []
+
     for ma in ma_shorts:
         for tp in tp_values:
-            data_bt, trades = backtest_sma(df, MA_SHORT_DEFAULT=ma, ma_long=ma * 2, take_profit_pct=tp, **kwargs)
+            # build a config derived from global defaults and override MA params
+            grid_cfg = BacktestConfig.from_global()
+            grid_cfg.MA_SHORT_DEFAULT = ma
+            grid_cfg.ma_long = ma * 2
+            grid_cfg.take_profit_pct = tp
+            # apply any keyword overrides from kwargs
+            for k, v in kwargs.items():
+                if hasattr(grid_cfg, k):
+                    setattr(grid_cfg, k, v)
+
+            data_bt, trades = backtest_sma(df, cfg=grid_cfg)
             metrics = compute_metrics_from_equity(data_bt['Equity'])
-            actor(trades)
+            pf = profit_factor(trades)
+
             results.append({
                 'MA_SHORT_DEFAULT': ma,
-                'take__pcprofitt': tp if tp is not None else np.nan,
+                'take_profit_pct': tp if tp is not None else np.nan,
                 'total_return_pct': metrics['total_return_pct'],
-                'CAGR_pct': metrics['CAGR_pcte': metric'],
-           
-            print("whatttttttttttttttttttt")
-            print(pf)     'sharps['sharpe'],
+                'CAGR_pct': metrics['CAGR_pct'],
+                'sharpe': metrics['sharpe'],
                 'sortino': metrics['sortino'],
                 'max_drawdown_pct': metrics['max_drawdown_pct'],
                 'profit_factor': pf,
                 'num_trades': len(trades)
             })
+
+    print("\n===== result of def optimize_grid =====")
+    print(pd.DataFrame(results))
     return pd.DataFrame(results)
 
 
+
+       #todo: add all variable to optimization_objective
+def objective(trial):
+    MA_SHORT_DEFAULT_T = trial.suggest_int("short_window", 65, 80)
+    ma_longg = trial.suggest_int("long_window", 110, 150)
+    take_profit_pctt = trial.suggest_float("take_profit", 0.01, 0.05)
+    # construct a BacktestConfig from globals and override with trial parameters
+    cfg = BacktestConfig.from_global()
+    cfg.MA_SHORT_DEFAULT = MA_SHORT_DEFAULT_T
+    cfg.ma_long = ma_longg
+    cfg.take_profit_pct = take_profit_pctt
+    # use a fresh dataframe from the given path (respect GLOBAL_CONFIG data_path if set)
+    df_local = load_data(path_csv=GLOBAL_CONFIG.get("Data Path", r"F:\\sell\\EURUSD60_h1_converted.csv"))
+    data_bt, trades = backtest_sma(df_local, cfg=cfg)
+    metrics = compute_metrics_from_equity(data_bt['Equity'])
+    pf = profit_factor(trades)
+    return pf
+
+
+def run_optuna_trials(n_trials: int = 1):
+    """Run an Optuna study using the objective defined above. Returns the study."""
+    study = optuna.create_study(direction='maximize')
+    study.optimize(objective, n_trials=n_trials)
+    print("\n===== Best trial parameters =====")
+    print(study.best_trial.params)
+    print(f"Best trial value (CAGR %): {study.best_trial.value}")
+    return study
+
+# return study.best_trial.params, study.best_trial.value
 # ------------------------- Main (config + run) -------------------------
 def main():
-     # ---------- Default configuration ----------
-    defaults = {
-        "data_path": "data.csv",
-        "initial_capital": 10000.0,
-        "position_size_pct": 0.5,
-        "commission": 0.0,
-        "slippage": 0.0005,
-        "MA_SHORT_DEFAULT": 10,
-        "ma_long": 20,
-        "exit_on_ma_cross": True,
-        "take_profit_pct": 0.05,
-        "stop_loss_pct": -0.05,
-        "max_holding_days": None,
-        "use_trailing_atr": True,
-        "atr_mult": 3.0,
-        "atr_period": 14,
-    }
-
-    # ---------- Get user config via UI (optional) ----------
+    # We'll use GLOBAL_CONFIG (exact UI-label keys) as the authoritative source.
+    # apply_config_globally() ensures module-level variables are set.
     ui_ran = False
     try:
-        config = get_user_config()
-        # update defaults in-place with provided non-None values
-        defaults.update({k: v for k, v in config.items() if v is not None})
+        # Show UI exactly once and capture values
+        ui_values = get_user_config()
+        if isinstance(ui_values, dict):
+            for k, v in ui_values.items():
+                # Accept UI label keys (e.g. "Data Path") or internal keys (e.g. 'data_path')
+                if k in GLOBAL_CONFIG and v is not None:
+                    GLOBAL_CONFIG[k] = v
+                elif k in UI_TO_INTERNAL.values() and v is not None:
+                    # map internal key back to UI label
+                    ui_key = next((uk for uk, ik in UI_TO_INTERNAL.items() if ik == k), None)
+                    if ui_key:
+                        GLOBAL_CONFIG[ui_key] = v
+                elif k in UI_TO_INTERNAL.keys() and v is not None:
+                    # already an exact UI key
+                    GLOBAL_CONFIG[k] = v
+        apply_config_globally()
         print("✅ Using parameters from UI.")
 
-        # Run the backtest once using UI config and get results
-        df, bt_data, bt_trades, used_config = main_from_ui(config=defaults)
+        # Run Optuna if desired (respecting Data Path provided via UI)
+        # Run optuna trials before running full backtest if you want optimized params
+        try:
+            study = run_optuna_trials(n_trials=15)
+        except Exception as e:
+            print("Optuna failed or was skipped:", e)
+
+        # Run the backtest once using UI-provided configuration; pass the UI-updated globals
+        df, bt_data, bt_trades, used_config = main_from_ui(config=GLOBAL_CONFIG)
         ui_ran = True
-        # ensure defaults reflect used_config
-        defaults.update({k: v for k, v in used_config.items() if v is not None})
-
+        # ensure GLOBAL_CONFIG reflects used_config (if used_config uses internal keys)
+        if isinstance(used_config, dict):
+            for k, v in used_config.items():
+                if k in GLOBAL_CONFIG:
+                    GLOBAL_CONFIG[k] = v
+                else:
+                    # maybe used_config is internal-keyed
+                    ui_key = next((uk for uk, ik in UI_TO_INTERNAL.items() if ik == k), None)
+                    if ui_key:
+                        GLOBAL_CONFIG[ui_key] = v
+        apply_config_globally()
     except Exception as e:
-        print(f"⚠️ UI failed or closed ({e}). Using default parameters.")
-        # If UI failed or was closed, fall back to non-UI flow below which will run the backtest
+        print(f"⚠️ UI failed or closed ({e}). Using GLOBAL_CONFIG defaults.")
 
-        
-
-    # If UI already ran and produced results, skip rerunning the backtest
+    # If UI did not run, ensure module globals reflect GLOBAL_CONFIG
     if not ui_ran:
-        # ---------- Load data ----------
-        df = load_data(defaults["data_path"])
-
-        # ---------- Run backtest ----------
-        bt_data, bt_trades = backtest_sma(
-            df,
-            MA_SHORT_DEFAULT=defaults["MA_SHORT_DEFAULT"],
-            ma_long=defaults["ma_long"],
-            initial_capital=defaults["initial_capital"],
-            position_size_pct=defaults["position_size_pct"],
-            commission=defaults["commission"],
-            slippage=defaults["slippage"],
-            exit_on_ma_cross=defaults["exit_on_ma_cross"],
-            take_profit_pct=defaults["take_profit_pct"],
-            stop_loss_pct=defaults["stop_loss_pct"],
-            max_holding_days=defaults["max_holding_days"],
-            use_trailing_atr=defaults["use_trailing_atr"],
-            atr_mult=defaults["atr_mult"],
-            atr_period=defaults["atr_period"],
-        )
+        apply_config_globally()
+        df = load_data(data_path)
+        cfg = BacktestConfig.from_global()
+        bt_data, bt_trades = backtest_sma(df, cfg=cfg)
 
     # ---------- Compute metrics ----------
     metrics = compute_metrics_from_equity(bt_data["Equity"])
@@ -455,12 +645,9 @@ def main():
     avg_loss = loss_trades['pct_return'].mean() if not loss_trades.empty else np.nan
 
     # ---------- print summary ----------
-    ma_short = defaults["MA_SHORT_DEFAULT"]
-    ma_long = defaults["ma_long"]
-    initial_capital = defaults["initial_capital"]
-
+    # use module-level variables directly (don't shadow with local assignments)
     print("\n=== Backtest Summary ===")
-    print(f"MA short: {defaults['MA_SHORT_DEFAULT']}, MA long: {defaults['ma_long']}")
+    print(f"MA short: {MA_SHORT_DEFAULT}, MA long: {ma_long}")
     print(f"Initial capital: {initial_capital}")
     print(f"Number of trades: {num_trades}")
     print(f"Total return: {metrics['total_return_pct']:.2f}%")
@@ -471,14 +658,14 @@ def main():
     print(f"Win rate: {win_rate:.2%}, Avg win: {avg_win:.2f}%, Avg loss: {avg_loss:.2f}%")
 
     # ---------- save outputs ----------
-    # create a timestamped output folder: optimization+YYYYMMDD_HHMM
+    # create a timestamped output folder: optimization&backtest+YYYY_MM_DD_HHMM
     now_str = datetime.now().strftime('%Y_%m_%d_%H%M')
     out_dir = os.path.join(os.getcwd(), f"optimization&backtest{now_str}")
     os.makedirs(out_dir, exist_ok=True)
 
     bt_trades.to_csv(os.path.join(out_dir, 'backtest_trades.csv'), index=False)
     bt_data[[
-        'Close', f"SMA_{defaults['MA_SHORT_DEFAULT']}", f"SMA_{defaults['ma_long']}", 'ATR',
+        'Close', f"SMA_{MA_SHORT_DEFAULT}", f"SMA_{ma_long}", 'ATR',
         'Entry', 'Exit', 'PositionQty', 'Cash', 'Equity'
     ]].to_csv(os.path.join(out_dir, 'backtest_daily.csv'))
 
@@ -491,22 +678,23 @@ def main():
         df,
         ma_shorts=opt_ma_shorts,
         tp_values=opt_tp_values,
-        initial_capital=defaults["initial_capital"],
-        position_size_pct=defaults["position_size_pct"],
-        commission=defaults["commission"],
-        slippage=defaults["slippage"],
-        exit_on_ma_cross=defaults["exit_on_ma_cross"],
-        stop_loss_pct=defaults["stop_loss_pct"],
-        max_holding_days=defaults["max_holding_days"],
-        use_trailing_atr=defaults["use_trailing_atr"],
-        atr_mult=defaults["atr_mult"],
-        atr_period=defaults["atr_period"],
+        initial_capital=initial_capital,
+        position_size_pct=position_size_pct,
+        commission=commission,
+        slippage=slippage,
+        exit_on_ma_cross=exit_on_ma_cross,
+        stop_loss_pct=stop_loss_pct,
+        max_holding_days=max_holding_days,
+        use_trailing_atr=use_trailing_atr,
+        atr_mult=atr_mult,
+        atr_period=atr_period,
     )
     opt_df.to_csv(os.path.join(out_dir, 'optimization_results.csv'), index=False)
     print(f"Saved: optimization_results.csv -> {out_dir}")
 
     # ---------- write run log (config + summary) ----------
-    final_config = used_config if 'ui_ran' in locals() and ui_ran else defaults
+    # write out GLOBAL_CONFIG (UI-label keyed) as the final config for the run log
+    final_config = GLOBAL_CONFIG.copy()
     log_path = os.path.join(out_dir, 'used_config_and_summary.txt')
     try:
         with open(log_path, 'w', encoding='utf-8') as f:
@@ -545,7 +733,7 @@ def main():
     plt.figure(figsize=(14, 6))
     plt.title('Price with SMAs and Trades')
     plt.plot(bt_data.index, bt_data['Close'], label='Close')
-    plt.plot(bt_data.index, bt_data[f"SMA_{defaults['MA_SHORT_DEFAULT']}"], label=f"SMA_{defaults['MA_SHORT_DEFAULT']}")
+    plt.plot(bt_data.index, bt_data[f"SMA_{MA_SHORT_DEFAULT}"], label=f"SMA_{MA_SHORT_DEFAULT}")
     plt.plot(bt_data.index, bt_data[f'SMA_{ma_long}'], label=f'SMA_{ma_long}')
     ents = bt_data[bt_data['Entry']]
     exs = bt_data[bt_data['Exit']]
